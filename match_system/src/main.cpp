@@ -6,7 +6,9 @@
 #include <thrift/server/TSimpleServer.h>
 #include <thrift/transport/TServerSocket.h>
 #include <thrift/transport/TBufferTransports.h>
+
 #include <iostream>
+#include <thread>
 
 using namespace ::apache::thrift;
 using namespace ::apache::thrift::protocol;
@@ -18,44 +20,46 @@ using namespace std;
 
 
 class MatchHandler : virtual public MatchIf {
- public:
-  MatchHandler() {
-    // Your initialization goes here
-  }
+    public:
+        MatchHandler() {
+            // Your initialization goes here
+        }
 
-  /**
-   * user :添加的用户
-   * info : 附加信息
-   * 向服务器添加一名用户
-   * 
-   * @param user
-   * @param info
-   */
-  int32_t add_user(const User& user, const std::string& info) {
-    // Your implementation goes here
-    printf("add_user\n");
-    return 0;
-  }
+        /**
+         * user :添加的用户
+         * info : 附加信息
+         * 向服务器添加一名用户
+         * 
+         * @param user
+         * @param info
+         */
+        int32_t add_user(const User& user, const std::string& info) {
+            // Your implementation goes here
+            printf("add_user\n");
+            return 0;
+        }
 
-  int32_t remove_user(const User& user, const std::string& info) {
-    // Your implementation goes here
-    printf("remove_user\n");
-    return 0;
-  }
+        int32_t remove_user(const User& user, const std::string& info) {
+            // Your implementation goes here
+            printf("remove_user\n");
+            return 0;
+        }
 
 };
 
 int main(int argc, char **argv) {
-  int port = 9090;
-  ::std::shared_ptr<MatchHandler> handler(new MatchHandler());
-  ::std::shared_ptr<TProcessor> processor(new MatchProcessor(handler));
-  ::std::shared_ptr<TServerTransport> serverTransport(new TServerSocket(port));
-  ::std::shared_ptr<TTransportFactory> transportFactory(new TBufferedTransportFactory());
-  ::std::shared_ptr<TProtocolFactory> protocolFactory(new TBinaryProtocolFactory());
+    int port = 9090;
+    ::std::shared_ptr<MatchHandler> handler(new MatchHandler());
+    ::std::shared_ptr<TProcessor> processor(new MatchProcessor(handler));
+    ::std::shared_ptr<TServerTransport> serverTransport(new TServerSocket(port));
+    ::std::shared_ptr<TTransportFactory> transportFactory(new TBufferedTransportFactory());
+    ::std::shared_ptr<TProtocolFactory> protocolFactory(new TBinaryProtocolFactory());
 
-  TSimpleServer server(processor, serverTransport, transportFactory, protocolFactory);
-  cout << "Start server" << endl;
-  server.serve();
-  return 0;
+    TSimpleServer server(processor, serverTransport, transportFactory, protocolFactory);
+    cout << "Start server" << endl;
+
+
+    server.serve();
+    return 0;
 }
 
