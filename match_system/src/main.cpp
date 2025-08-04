@@ -2,10 +2,19 @@
 // You should copy it to another filename to avoid overwriting it.
 
 #include "match_server/Match.h"
+
+#include <thrift/concurrency/ThreadManager.h>
+#include <thrift/concurrency/ThreadFactory.h>
+
 #include <thrift/protocol/TBinaryProtocol.h>
 #include <thrift/server/TSimpleServer.h>
+#include <thrift/server/TThreadedServer.h>
 #include <thrift/transport/TServerSocket.h>
+#include <thrift/transport/TSocket.h>
 #include <thrift/transport/TBufferTransports.h>
+#include <thrift/transport/TTransportUtils.h>
+#include <thrift/TToString.h>
+
 
 #include <iostream>
 #include <thread>
@@ -16,6 +25,7 @@
 
 using namespace ::apache::thrift;
 using namespace ::apache::thrift::protocol;
+using namespace apache::thrift::concurrency;
 using namespace ::apache::thrift::transport;
 using namespace ::apache::thrift::server;
 
@@ -40,38 +50,59 @@ class Pool {
             printf("Match Result: %d %d\n", a, b);
         }
 
+        bool check_match(uint32_t i, uint32_t j) {
+            auto a = users[i], b = users[j];
+
+            int dt = abs(a.score - b.score);
+            int a_max_dif = wt[i] * 50;
+            int b_max_dif = wt[j] * 50;
+
+            return dt <= a_max_dif && dt <= b_max_dif;
+        }
+
         void match() {
+            for (uint32_t i = 0; i < users.size(); i ++ )
+                wt[i] ++ ;
+
             while (users.size() > 1) {
                 // auto a = users[0], b = users[1];
                 // users.erase(users.begin());
                 // users.erase(users.begin());
-                sort(users.begin(), users.end(), [&](User &a, User &b) {
-                        return a.score < b.score;
-                        });
+
+                //sort(users.begin(), users.end(), [&](User &a, User &b) {
+                //        return a.score < b.score;
+                //        });
 
                 bool flag = true;
-                for (uint32_t i = 1; i < users.size(); i ++ ) {
-                    auto a = users[i - 1], b = users[i];
-                    if (b.score - a.score <= 50) {
-                        users.erase(users.begin() + i - 1, users.begin() + i + 1);
-                        save_result(a.id, b.id);
-
-                        flag = false;
-                        break;
+                for (uint32_t i = 0; i < users.size(); i ++ ) {
+                    for (uint32_t j = i + 1; j < users.size(); j ++ ) {
+                        if (check_match(i, j)) {
+                            auto a = users[i], b = users[j];
+                            users.erase(users.begin() + j); // 先删除后面的
+                            users.erase(users.begin() + i);
+                            wt.erase(wt.begin() + j);
+                            wt.erase(wt.begin() + i);
+                            save_result(a.id, b.id);
+                            flag = false;
+                            break;
+                        }
                     }
+                    if (!flag) break;
                 }
-                if (flag) break;;
+                if (flag) break;
             }
         }
 
         void add(User user) {
             users.push_back(user);
+            wt.push_back(0);
         }
 
         void remove(User user) {
             for (uint32_t i = 0; i < users.size(); i ++ ) {
                 if (users[i].id == user.id) {
                     users.erase(users.begin() + i);
+                    wt.erase(wt.begin() + i);
                     break;
                 }
             }
@@ -79,6 +110,7 @@ class Pool {
 
     private:
         vector<User> users;
+        vector<int> wt; // 等待时间 单位s
 }pool;
 
 class MatchHandler : virtual public MatchIf {
@@ -138,20 +170,49 @@ void consume_task() {
                 pool.remove(task.user);
             }
 
-            pool.match();
+            // pool.match();
         }
     }
 }
 
-int main(int argc, char **argv) {
-    int port = 9090;
-    ::std::shared_ptr<MatchHandler> handler(new MatchHandler());
-    ::std::shared_ptr<TProcessor> processor(new MatchProcessor(handler));
-    ::std::shared_ptr<TServerTransport> serverTransport(new TServerSocket(port));
-    ::std::shared_ptr<TTransportFactory> transportFactory(new TBufferedTransportFactory());
-    ::std::shared_ptr<TProtocolFactory> protocolFactory(new TBinaryProtocolFactory());
+class MatchCloneFactory : virtual public MatchIfFactory {
+ public:
+  ~MatchCloneFactory() override = default;
+  MatchIf* getHandler(const ::apache::thrift::TConnectionInfo& connInfo) override
+  {
+    std::shared_ptr<TSocket> sock = std::dynamic_pointer_cast<TSocket>(connInfo.transport);
+    // cout << "Incoming connection\n";
+    // cout << "\tSocketInfo: "  << sock->getSocketInfo() << "\n";
+    // cout << "\tPeerHost: "    << sock->getPeerHost() << "\n";
+    // cout << "\tPeerAddress: " << sock->getPeerAddress() << "\n";
+    // cout << "\tPeerPort: "    << sock->getPeerPort() << "\n";
+    return new MatchHandler;
+  }
+  void releaseHandler( MatchIf* handler) override {
+    delete handler;
+  }
+};
 
-    TSimpleServer server(processor, serverTransport, transportFactory, protocolFactory);
+int main(int argc, char **argv) {
+    // int port = 9090;
+    // ::std::shared_ptr<MatchHandler> handler(new MatchHandler());
+    // ::std::shared_ptr<TProcessor> processor(new MatchProcessor(handler));
+    // ::std::shared_ptr<TServerTransport> serverTransport(new TServerSocket(port));
+    // ::std::shared_ptr<TTransportFactory> transportFactory(new TBufferedTransportFactory());
+    // ::std::shared_ptr<TProtocolFactory> protocolFactory(new TBinaryProtocolFactory());
+
+    // TSimpleServer server(processor, serverTransport, transportFactory, protocolFactory);
+    int port = 9090;
+    if (argc > 1)
+        port = atoi(argv[1]);
+    printf("Port:%d\n", port);
+
+    TThreadedServer server(
+            std::make_shared<MatchProcessorFactory>(std::make_shared<MatchCloneFactory>()),
+            std::make_shared<TServerSocket>(port), //port
+            std::make_shared<TBufferedTransportFactory>(),
+            std::make_shared<TBinaryProtocolFactory>());
+
     cout << "Start server" << endl;
 
     thread matching_thread(consume_task);
